@@ -1,0 +1,92 @@
+services:
+
+  # ----------------------------------------
+  # Pub/Sub Emulator
+  # ----------------------------------------
+
+  pubsub-emulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.pubsub
+
+    ports:
+      - "8085:8085"
+
+    restart: unless-stopped
+
+  # ----------------------------------------
+  # BigQuery Emulator
+  # ----------------------------------------
+
+  bigquery-emulator:
+    image: ghcr.io/goccy/bigquery-emulator:latest
+
+    command:
+      - --project=local-project
+      - --port=9050
+      - --grpc-port=9060
+
+    ports:
+      - "9050:9050"
+      - "9060:9060"
+
+    restart: unless-stopped
+
+  # ----------------------------------------
+  # Local Environment Initializer
+  # ----------------------------------------
+
+  init:
+    build: .
+
+    command: python scripts/init_local.py
+
+    environment:
+      GCP_PROJECT_ID: local-project
+      PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
+      BIGQUERY_EMULATOR_HOST: bigquery-emulator:9050
+      BIGQUERY_DATASET: document_pipeline
+      APP_URL: http://app:8080
+
+    depends_on:
+      pubsub-emulator:
+        condition: service_started
+
+      bigquery-emulator:
+        condition: service_started
+
+    restart: "no"
+
+  # ----------------------------------------
+  # FastAPI Application
+  # ----------------------------------------
+
+  app:
+    build: .
+
+    ports:
+      - "8080:8080"
+
+    environment:
+      GCP_PROJECT_ID: local-project
+      GCP_REGION: europe-west9
+
+      PUBSUB_EMULATOR_HOST: pubsub-emulator:8085
+
+      BIGQUERY_EMULATOR_HOST: bigquery-emulator:9050
+      BIGQUERY_DATASET: document_pipeline
+      BIGQUERY_METADATA_TABLE: document_metadata
+      BIGQUERY_ERRORS_TABLE: processing_errors
+
+      PUBSUB_TOPIC: document-processing
+      PUBSUB_DLQ_TOPIC: document-processing-dlq
+      PUBSUB_SUBSCRIPTION: document-processing-sub
+
+      ENVIRONMENT: development
+      LOG_LEVEL: DEBUG
+
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+    restart: unless-stopped
